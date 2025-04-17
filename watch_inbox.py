@@ -7,6 +7,7 @@ import tempfile
 import requests
 from dotenv import load_dotenv
 from pathlib import Path
+from vector_db import PitchVectorDB
 
 # Load environment
 env_path = Path(__file__).resolve().parent / ".env"
@@ -16,6 +17,8 @@ EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 UPLOAD_ENDPOINT = "http://127.0.0.1:5000/upload"  # Replace with hosted URL later
 
+# Initialize vector database
+vector_db = PitchVectorDB()
 
 def clean_subject(s):
     try:
@@ -45,7 +48,12 @@ def handle_attachments(msg, from_email, subject):
                         files={"file": f},
                         data={"from_email": from_email, "subject": subject}
                     )
-                    print("📬 Response from Mano:", response.json())
+                    if response.status_code == 200:
+                        print("📬 Response from Mano:", response.json())
+                        # Vector DB storage is handled in the app.py endpoint
+                    else:
+                        print(f"❌ Error from API: {response.status_code}")
+                        print(response.text)
 
 
 def check_inbox():
