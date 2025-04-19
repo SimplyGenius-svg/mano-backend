@@ -1,1 +1,13 @@
+# Environment
+venv/
 .env
+*.json
+
+# PyCache
+__pycache__/
+*.py[cod]
+
+# IDEs
+.vscode/
+.idea/
+
