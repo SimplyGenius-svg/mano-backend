@@ -1,11 +1,11 @@
 import os
 import fitz  # PyMuPDF
+import smtplib
+from email.mime.text import MIMEText
 from firebase import db
 from firebase_admin import firestore
 from gpt_helpers import generate_pitch_summary, generate_friendly_feedback
 from dotenv import load_dotenv
-import smtplib
-from email.mime.text import MIMEText
 
 load_dotenv()
 
@@ -17,7 +17,6 @@ We invest in early-stage startups leveraging AI to create defensible workflows w
 Founders must show deep understanding of their space, product velocity, and clarity in go-to-market execution.
 """
 
-
 def extract_text_from_pdf(pdf_bytes):
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -25,7 +24,6 @@ def extract_text_from_pdf(pdf_bytes):
     except Exception as e:
         print(f"❌ PDF extraction failed: {e}")
         return ""
-
 
 def send_email_reply(to_email, subject, reply_text):
     msg = MIMEText(reply_text)
@@ -41,15 +39,16 @@ def send_email_reply(to_email, subject, reply_text):
     except Exception as e:
         print(f"❌ Email send failed: {e}")
 
-
 def handle_founder_email(email_obj):
     attachments = email_obj.get("attachments", {})
-    if not attachments:
-        print("📭 No pitch deck attached — skipping.")
-        return
+    pdf_text = ""
 
-    pdf_filename, pdf_bytes = next(iter(attachments.items()))
-    pdf_text = extract_text_from_pdf(pdf_bytes)
+    if attachments:
+        pdf_filename, pdf_bytes = next(iter(attachments.items()))
+        pdf_text = extract_text_from_pdf(pdf_bytes)
+    else:
+        print("📭 No pitch deck attached — continuing with body only.")
+
     email_body = email_obj["body"]
 
     try:
@@ -58,21 +57,20 @@ def handle_founder_email(email_obj):
         report = "⚠️ Could not generate response."
         print(f"❌ GPT error: {e}")
 
-    # Save to Firestore only if GPT succeeded
-    if "⚠️" not in report:
-        try:
-            founder_id = email_obj["sender"].replace(".", "_").replace("@", "__")
-            doc_id = f"{founder_id}_{email_obj['id']}"
-            db.collection("pitches").document(doc_id).set({
-                "email": email_obj["sender"],
-                "subject": email_obj["subject"],
-                "last_body": email_body,
-                "report": report,
-                "timestamp": firestore.SERVER_TIMESTAMP
-            })
-            print(f"✅ Pitch report saved: {doc_id}")
-        except Exception as e:
-            print(f"❌ Firestore error: {e}")
+    # Save to Firestore regardless of report success
+    try:
+        founder_id = email_obj["sender"].replace(".", "_").replace("@", "__")
+        doc_id = f"{founder_id}_{email_obj['id']}"
+        db.collection("pitches").document(doc_id).set({
+            "email": email_obj["sender"],
+            "subject": email_obj["subject"],
+            "last_body": email_body,
+            "report": report,
+            "timestamp": firestore.SERVER_TIMESTAMP
+        })
+        print(f"✅ Pitch record saved: {doc_id}")
+    except Exception as e:
+        print(f"❌ Firestore error: {e}")
 
     send_email_reply(
         email_obj["sender"],
@@ -89,23 +87,33 @@ Warmly,
 The Mano Team"""
     )
 
-
 def handle_founder_reply(email_obj):
     sender = email_obj["sender"]
     founder_id = sender.replace(".", "_").replace("@", "__")
 
     try:
-        # Fetch latest pitch
-        docs = db.collection("pitches").where("email", "==", sender).order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()
+        docs = db.collection("pitches")\
+            .where("email", "==", sender)\
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)\
+            .limit(1).stream()
+
         doc = next(docs, None)
 
         if not doc:
-            print("⚠️ No pitch found to reply against.")
+            send_email_reply(sender, email_obj["subject"],
+                "Hey! We couldn’t locate your original pitch in our system. Mind resending the deck?")
+            print("⚠️ No pitch found — sent missing pitch request.")
             return
 
         data = doc.to_dict()
         original_report = data.get("report", "")
         original_body = data.get("last_body", "")
+
+        if "⚠️" in original_report or not original_report.strip():
+            send_email_reply(sender, email_obj["subject"],
+                "Hey! We received your reply but don’t seem to have your full deck or summary on file. Could you please resend it?")
+            print("⚠️ Original report missing or broken — asked for resubmission.")
+            return
 
         thread = f"""
 📩 Original Pitch:
