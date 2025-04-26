@@ -4,8 +4,11 @@ import smtplib
 from email.mime.text import MIMEText
 from firebase import db
 from firebase_admin import firestore
-from gpt_helpers import generate_pitch_summary, generate_friendly_feedback
 from dotenv import load_dotenv
+
+from gpt_helpers import generate_pitch_summary, generate_friendly_feedback
+from memory_logger import save_memory
+from sentience_engine import process_email_for_memory
 
 load_dotenv()
 
@@ -42,39 +45,64 @@ def send_email_reply(to_email, subject, reply_text):
 def handle_founder_email(email_obj):
     attachments = email_obj.get("attachments", {})
     pdf_text = ""
+    meaningful_pitch = False
 
     if attachments:
         pdf_filename, pdf_bytes = next(iter(attachments.items()))
         pdf_text = extract_text_from_pdf(pdf_bytes)
+        if pdf_text.strip():
+            meaningful_pitch = True
     else:
         print("📭 No pitch deck attached — continuing with body only.")
 
-    email_body = email_obj["body"]
+    email_body = email_obj["body"].strip()
+    sender = email_obj["sender"]
+    subject = email_obj["subject"]
 
     try:
         report = generate_pitch_summary(email_body, pdf_text, VC_THESIS)
+        if report.strip() and "⚠️" not in report:
+            meaningful_pitch = True
     except Exception as e:
         report = "⚠️ Could not generate response."
         print(f"❌ GPT error: {e}")
 
-    # Save to Firestore regardless of report success
+    if not meaningful_pitch:
+        print(f"⚠️ No meaningful pitch received from {sender}")
+        send_email_reply(
+            sender,
+            subject,
+            """Hi there,
+
+Thanks for reaching out!
+
+It looks like we weren’t able to extract a full pitch or deck from your message. Could you kindly resend your pitch, preferably with a PDF deck if you have one?
+
+Warmly,  
+The Mano Team"""
+        )
+        return  # 🚪 Stop here. Don't save junk.
+
+    # Save valid pitch to Firestore
     try:
-        founder_id = email_obj["sender"].replace(".", "_").replace("@", "__")
-        doc_id = f"{founder_id}_{email_obj['id']}"
-        db.collection("pitches").document(doc_id).set({
-            "email": email_obj["sender"],
-            "subject": email_obj["subject"],
-            "last_body": email_body,
-            "report": report,
+        db.collection("pitches").add({
+            "sender": sender,
+            "subject": subject,
+            "body": email_body,
+            "parsed_summary": report,
+            "thread_id": email_obj.get("thread_id"),
+            "recipients": email_obj.get("recipients", []),
+            "source": "founder",
             "timestamp": firestore.SERVER_TIMESTAMP
         })
-        print(f"✅ Pitch record saved: {doc_id}")
+        print(f"✅ Pitch saved for {sender}")
     except Exception as e:
-        print(f"❌ Firestore error: {e}")
+        print(f"❌ Firestore save failed: {e}")
 
+    # Send proper thank you email
     send_email_reply(
-        email_obj["sender"],
-        email_obj["subject"],
+        sender,
+        subject,
         """Hi there,
 
 Thank you for sharing your pitch with us.
@@ -89,13 +117,13 @@ The Mano Team"""
 
 def handle_founder_reply(email_obj):
     sender = email_obj["sender"]
-    founder_id = sender.replace(".", "_").replace("@", "__")
 
     try:
         docs = db.collection("pitches")\
-            .where("email", "==", sender)\
+            .where("sender", "==", sender)\
             .order_by("timestamp", direction=firestore.Query.DESCENDING)\
-            .limit(1).stream()
+            .limit(1)\
+            .stream()
 
         doc = next(docs, None)
 
@@ -106,16 +134,17 @@ def handle_founder_reply(email_obj):
             return
 
         data = doc.to_dict()
-        original_report = data.get("report", "")
-        original_body = data.get("last_body", "")
+        original_report = data.get("parsed_summary", "")
+        original_body = data.get("body", "")
 
-        if "⚠️" in original_report or not original_report.strip():
+        if not original_body.strip() or not original_report.strip() or "⚠️" in original_report:
             send_email_reply(sender, email_obj["subject"],
                 "Hey! We received your reply but don’t seem to have your full deck or summary on file. Could you please resend it?")
             print("⚠️ Original report missing or broken — asked for resubmission.")
             return
 
-        thread = f"""
+        # 🧠 Build real feedback message
+        feedback_prompt = f"""
 📩 Original Pitch:
 {original_body}
 
@@ -126,7 +155,7 @@ def handle_founder_reply(email_obj):
 {email_obj['body']}
 """
 
-        reply = generate_friendly_feedback(thread)
+        reply = generate_friendly_feedback(feedback_prompt)
         send_email_reply(sender, email_obj["subject"], reply)
         print(f"✅ Feedback reply sent to {sender}")
 

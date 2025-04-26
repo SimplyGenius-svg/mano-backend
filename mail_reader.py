@@ -34,27 +34,48 @@ def decode_mime_words(header_val):
     decoded = ""
     for part, encoding in parts:
         if isinstance(part, bytes):
-            decoded += part.decode(encoding or "utf-8", errors="ignore")
+            try:
+                decoded += part.decode(encoding or "utf-8", errors="ignore")
+            except Exception as e:
+                print(f"⚠️ Failed to decode header part: {e}")
         else:
             decoded += part
     return decoded.strip()
 
 # 🔐 Connect to Gmail via IMAP
 def connect_to_mailbox():
-    mail = imaplib.IMAP4_SSL("imap.gmail.com")
-    mail.login(EMAIL_USER, EMAIL_PASS)
-    mail.select("inbox")
-    return mail
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(EMAIL_USER, EMAIL_PASS)
+        mail.select("inbox")
+        return mail
+    except Exception as e:
+        print(f"❌ Failed to connect to mailbox: {e}")
+        return None
 
 # 📩 Fetch all unread emails
 def fetch_all_unread_emails():
     mail = connect_to_mailbox()
+    if not mail:
+        return []
+
     status, messages = mail.search(None, "UNSEEN")
     email_ids = messages[0].split()
     emails = []
 
+    seen_ids = load_seen_ids()
+    new_seen_ids = set(seen_ids)
+
     for eid in email_ids:
+        eid_decoded = eid.decode()
+        if eid_decoded in seen_ids:
+            continue
+
         status, msg_data = mail.fetch(eid, "(RFC822)")
+        if status != "OK":
+            print(f"⚠️ Failed to fetch email ID {eid_decoded}")
+            continue
+
         raw_email = msg_data[0][1]
         msg = email.message_from_bytes(raw_email)
 
@@ -72,21 +93,23 @@ def fetch_all_unread_emails():
                 if content_type == "text/plain" and "attachment" not in content_disposition:
                     try:
                         body += part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                    except:
+                    except Exception as e:
+                        print(f"⚠️ Failed to decode email part: {e}")
                         continue
 
                 if "attachment" in content_disposition:
                     filename = part.get_filename()
-                    if filename and filename.lower().endswith(".pdf"):
+                    if filename and filename.lower().endswith(".pdf") and part.get_content_type() == "application/pdf":
                         attachments[filename] = part.get_payload(decode=True)
         else:
             try:
                 body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
-            except:
+            except Exception as e:
+                print(f"⚠️ Failed to decode email body: {e}")
                 body = ""
 
         emails.append({
-            "id": eid.decode(),
+            "id": eid_decoded,
             "subject": subject,
             "sender": sender,
             "date": date.strip(),
@@ -94,5 +117,8 @@ def fetch_all_unread_emails():
             "attachments": attachments
         })
 
+        new_seen_ids.add(eid_decoded)
+
+    save_seen_ids(new_seen_ids)
     mail.logout()
     return emails

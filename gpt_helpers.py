@@ -56,20 +56,26 @@ Make it clear, professional, and easy for a general partner to read in under 2 m
 
 def generate_friendly_feedback(email_thread):
     prompt = f"""
-A founder has followed up asking for feedback on their pitch.
+You are Mano, an intelligent VC chief of staff. A founder has followed up asking for feedback on their pitch.
 
-Below is the thread:
+Below is the full thread:
 
 {email_thread}
 
-Please write a brief, friendly, and helpful summary with:
-- One area they seem strong in
-- One suggestion or point of improvement
-- A kind, encouraging tone
-- No investment promise
+Write a professional, warm, and direct feedback email that includes:
+- One strength we liked
+- One suggestion for improvement
+- A short closing encouraging them to update us later
 
-Be professional and human.
+Rules:
+- DO NOT include a subject line inside the email body
+- DO NOT include placeholders like [Your Name] or [Your Company]
+- Always end the email with: "Warmly, Mano"
+- No promises of investment
+
+Keep it crisp, encouraging, and respectful.
 """
+
     return chat_with_gpt(prompt, temperature=0.5)
 
 
@@ -86,6 +92,33 @@ Write a partner-friendly, 1-page digest summarizing:
 - Key highlights and thesis fit
 - Your recommendation on which to review
 
-Keep it crisp and decision-oriented.
+Keep it crisp, structured, and decision-oriented.
 """
     return chat_with_gpt(prompt, temperature=0.3)
+
+
+
+def classify_founder_email_intent(body_text):
+    prompt = f"""
+Classify the following founder email body into one of two categories: \"pitch\" or \"feedback\".
+
+---
+Email Body:
+{body_text}
+---
+
+Rules:
+- If the founder is asking for feedback, review, comments, thoughts, classify as \"feedback\".
+- If the founder is introducing their company, pitching, fundraising, or describing their company or product, classify as \"pitch\".
+- Only reply with \"pitch\" or \"feedback\" — nothing else.
+"""
+
+    try:
+        classification = chat_with_gpt(prompt, temperature=0.2).strip().lower()
+        if classification in ["pitch", "feedback"]:
+            return classification
+        else:
+            return "pitch"  # default safe
+    except Exception as e:
+        print(f"❌ GPT classification error: {e}")
+        return "pitch"  # fallback
