@@ -1,25 +1,62 @@
-import openai
 import os
+import time
+import concurrent.futures
+import logging
 from dotenv import load_dotenv
+from openai import OpenAI, OpenAIError
 
+# Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def chat_with_gpt(prompt, temperature=0.4, model="gpt-4o"):
-    """
-    Unified interface for calling OpenAI ChatCompletion with new SDK syntax (v1.x+)
-    """
-    try:
-        response = openai.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"❌ GPT error: {e}")
-        return "⚠️ Could not generate response."
+# Setup OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("gpt_helpers")
+
+def chat_with_gpt(user_prompt, system_prompt=None, temperature=0.4, model="gpt-4o", max_retries=3, timeout_seconds=30):
+    """Unified, safe GPT call with retries, timeout, system prompts, and logging."""
+
+    def call_openai():
+        try:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_prompt})
+
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=1500
+            )
+            return response.choices[0].message.content.strip()
+        except OpenAIError as e:
+            logger.error(f"OpenAI call error: {e}")
+            raise e
+
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(call_openai)
+                return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            logger.warning(f"Timeout after {timeout_seconds} seconds (attempt {attempt+1})")
+        except OpenAIError as e:
+            wait_time = 5 * (attempt + 1)
+            logger.warning(f"OpenAI error. Waiting {wait_time} seconds before retry... Error: {e}")
+            time.sleep(wait_time)
+        except Exception as e:
+            logger.warning(f"GPT call failed (attempt {attempt+1}): {e}")
+        attempt += 1
+        time.sleep(2 * attempt)  # Backoff
+
+    logger.error("Max retries exceeded. Returning fallback.")
+    return "⚠️ Could not generate response due to system error."
+
+# --- Helper functions ---
 
 def generate_pitch_summary(email_body, pdf_text, vc_thesis):
     prompt = f"""
@@ -53,7 +90,6 @@ Make it clear, professional, and easy for a general partner to read in under 2 m
 """
     return chat_with_gpt(prompt)
 
-
 def generate_friendly_feedback(email_thread):
     prompt = f"""
 You are Mano, an intelligent VC chief of staff. A founder has followed up asking for feedback on their pitch.
@@ -75,9 +111,7 @@ Rules:
 
 Keep it crisp, encouraging, and respectful.
 """
-
     return chat_with_gpt(prompt, temperature=0.5)
-
 
 def generate_partner_digest(top_pitch_summaries):
     prompt = f"""
@@ -96,11 +130,9 @@ Keep it crisp, structured, and decision-oriented.
 """
     return chat_with_gpt(prompt, temperature=0.3)
 
-
-
 def classify_founder_email_intent(body_text):
     prompt = f"""
-Classify the following founder email body into one of two categories: \"pitch\" or \"feedback\".
+Classify the following founder email body into one of two categories: "pitch" or "feedback".
 
 ---
 Email Body:
@@ -108,17 +140,16 @@ Email Body:
 ---
 
 Rules:
-- If the founder is asking for feedback, review, comments, thoughts, classify as \"feedback\".
-- If the founder is introducing their company, pitching, fundraising, or describing their company or product, classify as \"pitch\".
-- Only reply with \"pitch\" or \"feedback\" — nothing else.
+- If the founder is asking for feedback, review, comments, thoughts, classify as "feedback".
+- If the founder is introducing their company, pitching, fundraising, or describing their company or product, classify as "pitch".
+- Only reply with "pitch" or "feedback" — nothing else.
 """
-
     try:
         classification = chat_with_gpt(prompt, temperature=0.2).strip().lower()
         if classification in ["pitch", "feedback"]:
             return classification
         else:
-            return "pitch"  # default safe
+            return "pitch"  # Safe fallback
     except Exception as e:
-        print(f"❌ GPT classification error: {e}")
-        return "pitch"  # fallback
+        logger.error(f"❌ GPT classification error: {e}")
+        return "pitch"  # Fallback

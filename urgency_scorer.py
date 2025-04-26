@@ -1,18 +1,30 @@
 import re
 
 def score_urgency(email_body, tone="neutral"):
+    """
+    Score urgency of an email based on language and tone.
+    Returns an integer between 0 and 10.
+    0 = no urgency (backlog)
+    10 = extreme urgency (critical immediate)
+    """
     body = email_body.lower()
 
-    if any(word in body for word in ["immediately", "asap", "urgent", "critical", "eod"]):
-        return 3  # Immediate Critical
-    if any(word in body for word in ["tomorrow", "today", "soon", "next day", "end of day"]):
-        return 2  # Urgent
-    if any(word in body for word in ["this week", "upcoming", "sometime soon"]):
-        return 1  # Soon
-    return 0  # Backlog
+    urgency = 0  # Default to no urgency
 
-    # Bonus: slight tone adjustment
-    if tone in ["frustrated", "concerned"]:
-        return min(urgency + 1, 3)
+    # Step 1: Keyword detection
+    if any(word in body for word in ["immediately", "asap", "urgent", "critical", "eod", "right away", "now"]):
+        urgency = 9
+    elif any(word in body for word in ["today", "by tonight", "in a few hours", "end of day", "this afternoon"]):
+        urgency = 7
+    elif any(word in body for word in ["tomorrow", "next day", "soon"]):
+        urgency = 5
+    elif any(word in body for word in ["this week", "early next week", "upcoming"]):
+        urgency = 3
+    elif any(word in body for word in ["next month", "whenever", "no rush"]):
+        urgency = 1
+
+    # Step 2: Tone adjustment
+    if tone.lower() in ["frustrated", "concerned", "angry", "anxious"]:
+        urgency = min(urgency + 1, 10)
 
     return urgency
