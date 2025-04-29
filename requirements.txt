@@ -1,10 +1,10 @@
-<<<<<<< HEAD
+
 Flask
 openai
 pymupdf
 python-dotenv
 numpy
-=======
+
 openai==1.75.0
 python-dotenv==1.1.0
 PyMuPDF==1.24.1
@@ -23,4 +23,3 @@ requests-oauthlib==2.0.0
 
 # Optional but helpful
 tqdm==4.67.1
->>>>>>> d253533b4d0691ce0646563c135a207be0aeead1
