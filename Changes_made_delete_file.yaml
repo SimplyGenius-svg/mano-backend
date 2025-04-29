@@ -1,0 +1,66 @@
+MANO BACKEND CHANGES SUMMARY - APRIL 28, 2025
+
+NEW FILES CREATED
+----------------
+
+1. query_engine.py
+   Purpose: Processes natural language queries and fetches data from Firestore
+   Key features:
+   - Converts plain English questions to structured database queries
+   - Dynamically builds and executes Firestore queries
+   - Formats results in readable markdown/HTML
+   - Handles errors gracefully with user-friendly messages
+
+2. visualization.py (proposed)
+   Purpose: Creates data visualizations from query results
+   Key features:
+   - Generates charts (bar, line, pie, scatter) based on data
+   - Automatically selects appropriate visualization types
+   - Converts charts to base64-encoded images for email embedding
+
+3. component_logger.py
+   Purpose: Tracks usage of different system components
+   Key features:
+   - Logs timestamped component usage to a text file
+   - Maintains usage analytics in a JSON file
+   - Provides decorator for easy integration with existing functions
+   - Records component name, action, and optional metadata
+
+MODIFIED FILES
+-------------
+
+1. partner.py (proposed changes)
+   - Added handling for "query:" prefixed emails
+   - Integrated with query engine to process data requests
+   - Added email response with formatted query results
+
+NEW FUNCTIONALITY
+----------------
+
+1. Natural Language Data Queries
+   - Partners can email questions like "Show me the top 10 startups by score"
+   - System automatically fetches and formats relevant data
+
+2. Component Usage Analytics
+   - System now tracks which "brain" components are being used
+   - Provides insights into most/least used functionality
+   - Creates an audit trail of system activities
+
+3. Data Visualization
+   - Enhances query results with appropriate charts
+   - Makes complex data more understandable
+
+USAGE EXAMPLES
+-------------
+
+1. Query Engine:
+   Subject: Query: What are our top 5 highest scoring startups this quarter?
+
+2. Component Logger:
+   # Manual logging
+   component_logger.log_usage("memory_logger", "save_memory")
+   
+   # Decorator usage
+   @log_component("memory_logger")
+   def save_memory():
+       # function body

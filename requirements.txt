@@ -1,0 +1,26 @@
+<<<<<<< HEAD
+Flask
+openai
+pymupdf
+python-dotenv
+numpy
+=======
+openai==1.75.0
+python-dotenv==1.1.0
+PyMuPDF==1.24.1
+requests==2.32.3
+beautifulsoup4==4.13.4
+bs4==0.0.2
+
+# Gmail & Auth
+google-api-python-client==2.167.0
+google-auth==2.39.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+httplib2==0.22.0
+oauthlib==3.2.2
+requests-oauthlib==2.0.0
+
+# Optional but helpful
+tqdm==4.67.1
+>>>>>>> d253533b4d0691ce0646563c135a207be0aeead1
