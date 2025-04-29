@@ -14,6 +14,7 @@ from sentience_engine import process_email_for_memory, EmailAnalysis, CapitalReq
 from gpt_helpers import chat_with_gpt
 from memory_logger import save_memory
 from firebase import db
+from query_engine import query_data
 
 # Set up logging
 logging.basicConfig(

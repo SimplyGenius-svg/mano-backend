@@ -2,6 +2,7 @@
 venv/
 .env
 *.json
+.DS_Store
 
 # PyCache
 __pycache__/

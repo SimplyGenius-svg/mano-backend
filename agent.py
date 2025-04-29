@@ -14,6 +14,7 @@ from firebase_admin import firestore
 from founder import handle_founder_email, handle_founder_reply, run_scheduled_tasks
 from reminder import reminder_checker_loop
 from partner import process_partner_email
+from component_logger import component_logger
 
 # Configure logging
 logging.basicConfig(
