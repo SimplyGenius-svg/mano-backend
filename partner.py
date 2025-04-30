@@ -336,161 +336,157 @@ def process_capital_request(email_analysis: EmailAnalysis) -> Tuple[bool, str]:
 
 # --- Enhanced Partner Email Handling ---
 def generate_partner_response(email_analysis: EmailAnalysis, partner: Partner) -> str:
-    """Generate a personalized response to a partner email based on analysis and partner profile"""
-    # Load the capital context for reference
-    capital_context = load_capital_context()
-    
-    # Build a complete context object for the response generation
-    context = {
-        "partner": {
-            "name": partner.name,
-            "role": partner.role,
-            "focus_areas": partner.focus_areas,
-            "communication_style": partner.communication_style,
-            "recent_interactions": partner.recent_interactions[:3] if partner.recent_interactions else []
-        },
-        "email": {
-            "subject": email_analysis.subject,
-            "body": email_analysis.body,
-            "intent": email_analysis.intent,
-            "urgency": email_analysis.urgency_score,
-            "action_items": [item.description for item in email_analysis.action_items],
-            "sentiment": email_analysis.sentiment_score,
-            "capital_request": email_analysis.capital_request.__dict__ if email_analysis.capital_request else None
-        },
-        "capital": {
-            "available": capital_context.available_capital,
-            "pipeline_counts": capital_context.pipeline_stage_counts,
-            "upcoming_decisions": len(capital_context.upcoming_decisions),
-            "active_deals_count": len(capital_context.active_deals)
-        }
-    }
-    
-    # Add company-specific context if relevant
-    if email_analysis.capital_request and email_analysis.capital_request.company:
-        company = email_analysis.capital_request.company
-        if company in capital_context.active_deals:
-            context["company"] = capital_context.active_deals[company]
-    
-    # Generate response based on communication style preference
-    style_map = {
-        "formal": "Respond formally and professionally with precise language and clear structure.",
-        "casual": "Respond in a conversational but professional tone. Be personable but still focused on business.",
-        "detailed": "Provide comprehensive analysis and detail in your response. Be thorough and meticulous.",
-        "brief": "Be concise and to the point. Focus on key information only with minimal elaboration.",
-        "standard": "Maintain a balanced, professional tone that's neither overly formal nor casual."
-    }
-    
-    style_instruction = style_map.get(partner.communication_style, style_map["standard"])
-    
-    # Generate the action plan based on analysis
-    action_plan = []
-    for item in email_analysis.action_items:
-        priority_str = "High priority" if item.priority >= 7 else "Medium priority" if item.priority >= 4 else "Low priority"
-        deadline_str = f" (by {item.deadline})" if item.deadline else ""
-        action_plan.append(f"- {item.description} - {priority_str}{deadline_str}")
-    
-    action_plan_str = "\n".join(action_plan) if action_plan else "No specific action items identified."
-    
-    # Create a comprehensive system prompt for response generation
-    system_prompt = f"""
-    You are Mano, the intelligent chief of staff for a venture capital firm specializing in capital deployment.
-    
-    Partner information:
-    - Name: {partner.name}
-    - Role: {partner.role}
-    - Focus areas: {', '.join(partner.focus_areas) if partner.focus_areas else 'General investing'}
-    - Communication preference: {partner.communication_style}
-    
-    Capital context:
-    - Available capital: ${capital_context.available_capital}M
-    - Active deals: {len(capital_context.active_deals)}
-    - Upcoming decisions: {len(capital_context.upcoming_decisions)}
-    
-    {style_instruction}
-    
-    Your goal is to be a thoughtful, strategic chief of staff who:
-    1. Demonstrates deep understanding of the underlying investment considerations
-    2. Thinks ahead and anticipates the partner's needs
-    3. Takes clear ownership of action items and next steps
-    4. Provides concise but complete responses that respect the partner's time
-    5. Shows good judgment about capital deployment decisions
-    """
-    
-    # Create the user prompt that contains the specific query
-    user_prompt = f"""
-    The partner has sent an email:
-    
-    Subject: {email_analysis.subject}
-    
-    Content:
-    {email_analysis.body}
-    
-    Based on my analysis:
-    - Intent: {email_analysis.intent}
-    - Urgency (1-10): {email_analysis.urgency_score}
-    - Sentiment: {email_analysis.sentiment_score}
-    
-    Action plan:
-    {action_plan_str}
-    
-    {f'Capital request details: {json.dumps(context["email"]["capital_request"], indent=2)}' if context["email"]["capital_request"] else ''}
-    
-    Please draft a helpful, professional response that directly addresses their needs and provides clear next steps.
-    """
-    
+    """Generate a sharp, formal, fast response to a partner email based on analysis and partner profile."""
     try:
+        capital_context = load_capital_context()
+
+        # Build context snapshot
+        context = {
+            "partner": {
+                "name": partner.name,
+                "role": partner.role,
+                "focus_areas": partner.focus_areas or ["General investing"],
+                "communication_style": partner.communication_style,
+                "recent_interactions": partner.recent_interactions[:3] if partner.recent_interactions else []
+            },
+            "email": {
+                "body": email_analysis.body,
+                "intent": email_analysis.intent,
+                "urgency": email_analysis.urgency_score,
+                "action_items": [item.description for item in email_analysis.action_items],
+                "sentiment": email_analysis.sentiment_score,
+                "capital_request": email_analysis.capital_request.__dict__ if email_analysis.capital_request else None
+            },
+            "capital": {
+                "available": capital_context.available_capital,
+                "pipeline_counts": capital_context.pipeline_stage_counts,
+                "upcoming_decisions": len(capital_context.upcoming_decisions),
+                "active_deals_count": len(capital_context.active_deals)
+            }
+        }
+
+        if email_analysis.capital_request and email_analysis.capital_request.company:
+            company = email_analysis.capital_request.company
+            if company in capital_context.active_deals:
+                context["company"] = capital_context.active_deals[company]
+
+        # Determine writing style based on partner preference
+        style_map = {
+            "formal": "Respond formally and precisely. Prioritize sharp, efficient language.",
+            "casual": "Respond conversationally but smartly — fast, sharp, and professional.",
+            "detailed": "Respond with thorough, structured detail without losing crispness.",
+            "brief": "Respond in short, pointed bullets with no unnecessary words.",
+            "standard": "Respond with a balanced, decisive, professional tone."
+        }
+        style_instruction = style_map.get(partner.communication_style, style_map["standard"])
+
+        # Action plan generation
+        action_plan = []
+        for item in email_analysis.action_items:
+            if not item.description:
+                continue
+            priority_label = "High" if item.priority >= 7 else "Med" if item.priority >= 4 else "Low"
+            deadline_note = f" (due {item.deadline})" if item.deadline else ""
+            action_plan.append(f"- {item.description} [{priority_label}]{deadline_note}")
+
+        action_plan_str = "\n".join(action_plan) if action_plan else "No immediate action items flagged."
+
+        # Build the system prompt for GPT
+        system_prompt = f"""
+        You are Mano — a fast, smart, ambitious chief of staff for a top venture capital partner.
+
+        Voice rules:
+        - Formal, sharp, young.
+        - Hunter mentality: think fast, move fast, no fluff.
+        - Do not restate email subjects or headers.
+        - Own the next steps without hesitating.
+        - Sound like an elite operator who anticipates needs.
+
+        Partner Profile:
+        - Name: {context['partner']['name']}
+        - Role: {context['partner']['role']}
+        - Focus: {', '.join(context['partner']['focus_areas'])}
+        - Communication style: {partner.communication_style}
+
+        Capital Context:
+        - Available capital: ${capital_context.available_capital}M
+        - Active deals: {context['capital']['active_deals_count']}
+        - Upcoming decisions: {context['capital']['upcoming_decisions']}
+
+        {style_instruction}
+        """
+
+        # Build user prompt (no subject included)
+        user_prompt = f"""
+        Incoming partner email:
+
+        {email_analysis.body}
+
+        Analysis:
+        - Intent: {email_analysis.intent}
+        - Urgency: {email_analysis.urgency_score}
+        - Sentiment: {email_analysis.sentiment_score}
+        - Action plan:
+        {action_plan_str}
+
+        {f'Capital request details: {json.dumps(context["email"]["capital_request"], indent=2)}' if context["email"]["capital_request"] else ''}
+
+        Draft a response that sounds human, confident, and decisive. 
+        """
+
         response = chat_with_gpt(user_prompt, system_prompt=system_prompt)
         return response
+
     except Exception as e:
         logger.error(f"Failed to generate partner response: {e}")
-        # Fallback response
+        # Polished fallback in case GPT fails
         return f"""
-        Dear {partner.name},
-        
-        Thank you for your email. I've noted your request and will work on this right away.
-        
-        I'll update you as soon as I have more information.
-        
-        Best regards,
+        Got your note — moving fast on this.
+        Will update shortly with next steps.
+
+        Best,
         Mano
         """
 
 def send_enhanced_email_reply(to_email: str, subject: str, reply_text: str, partner: Partner) -> bool:
-    """Send an email reply with enhanced formatting based on partner preferences"""
-    msg = MIMEMultipart()
-    msg["Subject"] = f"Re: {subject}"
-    msg["From"] = EMAIL_USER
-    msg["To"] = to_email
+    """Send a properly formatted email with plain text and HTML"""
     
-    # Add signature based on partner's communication style
+    # Main message container
+    msg = MIMEMultipart('alternative')  # <<< THIS FIXES YOUR ISSUE
+    msg['Subject'] = f"Re: {subject}"
+    msg['From'] = EMAIL_USER
+    msg['To'] = to_email
+    
+    # Add signature based on partner style
     signature = "\n\nBest regards,\nMano"
     if partner.communication_style == "formal":
         signature = "\n\nKind regards,\nMano\nChief of Staff"
     elif partner.communication_style == "casual":
         signature = "\n\nCheers,\nMano"
     
-    # Format the email body
     formatted_reply = reply_text.strip() + signature
     
-    # PRECOMPUTE HTML version (no \n in f-string)
-    html_formatted_reply = formatted_reply.replace('\n\n', '</p><p>').replace('\n', '<br>')
+    # Create plain text and HTML versions
+    plain_text = formatted_reply
+    formatted_html = formatted_reply.replace('\n\n', '</p><p>').replace('\n', '<br>')
+    html_text = f"""
+<html>
+  <body>
+    <p>{formatted_html}</p>
+  </body>
+</html>
+"""
     
-    # Now safely use in f-string
-    html_body = f"""
-    <html>
-      <body>
-        <p>{html_formatted_reply}</p>
-      </body>
-    </html>
-    """
+    # Attach both versions to the message
+    part1 = MIMEText(plain_text, 'plain')
+    part2 = MIMEText(html_text, 'html')
     
-    msg.attach(MIMEText(formatted_reply, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+    msg.attach(part1)
+    msg.attach(part2)
     
     try:
         import smtplib
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_USER, EMAIL_PASS)
             server.sendmail(EMAIL_USER, [to_email], msg.as_string())
         logger.info(f"Reply sent to {to_email}")
@@ -498,7 +494,6 @@ def send_enhanced_email_reply(to_email: str, subject: str, reply_text: str, part
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
         return False
-
     
 # --- Main Partner Email Processing Function ---
 def process_partner_email(email_obj: Dict[str, Any]) -> Dict[str, Any]:

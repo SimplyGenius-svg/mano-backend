@@ -1,15 +1,20 @@
+import json
 import os
 import re
 import threading
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Optional
 import dateparser
 from firebase_admin import firestore
+from openai import OpenAI
 from firebase import db
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+client = OpenAI()
 
 # Configure logging
 logging.basicConfig(
@@ -23,88 +28,53 @@ load_dotenv()
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
-# --- Time Extraction ---
 def extract_reminder_time(text):
     """Extract a time specification from a reminder request in text."""
     match = re.search(r"remind me (.+?)(\.|$|\n)", text, re.IGNORECASE)
     if match:
         raw_phrase = match.group(1).strip()
         logger.info(f"Found raw reminder phrase: {raw_phrase}")
-        
-        # Split on known lead-in phrases like "to", "that", etc.
-        trimmed = re.sub(r"^(to|that|for|about)\s+", "", raw_phrase, flags=re.IGNORECASE).strip()
-        logger.info(f"Trimmed for parsing: {trimmed}")
-        
-        # Parse the time phrase
-        parsed = None
+
         try:
-            # Try to extract the "time" part using regex
-            time_match = re.search(r"\b(in|at|on|by|before|after|next)\b.*", trimmed, re.IGNORECASE)
-            if time_match:
-                time_text = time_match.group(0).strip()
-                logger.info(f"Extracted time text: {time_text}")
-            else:
-                time_text = trimmed  # fallback if no match
-
-            # Now parse ONLY the time text
-            parsed = dateparser.parse(time_text, settings={"PREFER_DATES_FROM": "future", "STRICT_PARSING": True})
-
+            parsed = dateparser.parse(raw_phrase, settings={"PREFER_DATES_FROM": "future", "STRICT_PARSING": True})
         except Exception as e:
             logger.error(f"Error parsing time: {e}")
-            
+            return None
+
         if parsed:
             delta = (parsed - datetime.now()).total_seconds()
             logger.info(f"Parsed reminder time: {parsed} (in {int(delta)}s)")
-            # Only accept reminders between 30 seconds and 7 days in the future
             if 30 <= delta <= 604800:
                 return parsed
             else:
                 logger.warning("Parsed time outside expected range (30s to 7 days).")
         else:
-            logger.warning("dateparser couldn't parse trimmed phrase.")
+            logger.warning("dateparser couldn't parse the reminder phrase.")
     else:
         logger.warning("No 'remind me' phrase matched.")
     return None
-
 # --- Reminder Creation ---
-def create_reminder(email_obj):
-    """Create a reminder in Firestore from an email object."""
-    due_time = extract_reminder_time(email_obj["body"])
-    if not due_time:
-        logger.warning("No valid reminder time found in message.")
-        return None
-        
-    try:
-        # Extract the reminder topic/subject
-        subject_match = re.search(r"remind me (?:to|about|that) (.+?)(?:\s+(?:on|at|by|in|tomorrow|next)|$|\.|,)", email_obj["body"], re.IGNORECASE)
-        reminder_subject = subject_match.group(1).strip() if subject_match else "Follow-up requested"
-        
-        # Create the reminder document in Firestore
-        reminder_data = {
-            "title": reminder_subject,
-            "body": email_obj["body"],
-            "sender": email_obj["sender"],
-            "subject": email_obj.get("subject", "Reminder"),
-            "due": due_time.isoformat(),
-            "status": "pending",
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "thread_id": email_obj.get("thread_id")
-        }
-        
-        # Add document to Firestore and get the document reference
-        doc_ref = db.collection("reminders").add(reminder_data)
-        reminder_id = doc_ref[1].id
-        
-        logger.info(f"Reminder created in Firestore with ID: {reminder_id}")
-        
-        # Schedule the in-memory reminder for execution
-        schedule_reminder(reminder_id, due_time, email_obj)
-        
-        return reminder_id
-    except Exception as e:
-        logger.error(f"Failed to create reminder: {e}")
-        return None
-
+def create_reminder(email_obj, tags):
+     print("🔍 Running reminder check...")
+     due_time = extract_reminder_time(email_obj["body"])
+     if due_time:
+         print(f"📝 Creating reminder due at: {due_time}")
+         try:
+             doc_ref = db.collection("reminders").add({
+                 "title": email_obj["subject"] or "Follow-up requested",
+                 "body": email_obj["body"],
+                 "sender": email_obj["sender"],
+                 "due": due_time.isoformat(),
+                 "status": "pending",
+                 "created_at": firestore.SERVER_TIMESTAMP
+             })
+             print(f"✅ Reminder added to Firestore: ID = {doc_ref[1].id}")
+             schedule_reminder(doc_ref[1].id, due_time, email_obj)
+         except Exception as e:
+             print(f"❌ Firestore reminder insert failed: {e}")
+     else:
+         print("⚠️ Skipping reminder creation: No valid time parsed.")
+ 
 # --- Reminder Scheduling ---
 def schedule_reminder(reminder_id, due_time, email_obj):
     """Schedule an in-memory reminder using threading.Timer."""
