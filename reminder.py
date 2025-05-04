@@ -5,16 +5,19 @@ import threading
 import time
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Union
 import dateparser
-from firebase_admin import firestore
+from firebase_admin import firestore, initialize_app, credentials
 from openai import OpenAI
-from firebase import db
-from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
 
-client = OpenAI()
+# Load environment variables
+load_dotenv()
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Configure logging
 logging.basicConfig(
@@ -23,76 +26,202 @@ logging.basicConfig(
 )
 logger = logging.getLogger("reminder_system")
 
-# Load environment variables
-load_dotenv()
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-
-def extract_reminder_time(text):
-    """Extract a time specification from a reminder request in text."""
-    match = re.search(r"remind me (.+?)(\.|$|\n)", text, re.IGNORECASE)
-    if match:
-        raw_phrase = match.group(1).strip()
-        logger.info(f"Found raw reminder phrase: {raw_phrase}")
-
-        try:
-            parsed = dateparser.parse(raw_phrase, settings={"PREFER_DATES_FROM": "future", "STRICT_PARSING": True})
-        except Exception as e:
-            logger.error(f"Error parsing time: {e}")
-            return None
-
-        if parsed:
-            delta = (parsed - datetime.now()).total_seconds()
-            logger.info(f"Parsed reminder time: {parsed} (in {int(delta)}s)")
-            if 30 <= delta <= 604800:
-                return parsed
-            else:
-                logger.warning("Parsed time outside expected range (30s to 7 days).")
-        else:
-            logger.warning("dateparser couldn't parse the reminder phrase.")
+# Initialize Firebase
+try:
+    # Check if already initialized
+    firebase_app = initialize_app(
+        credentials.Certificate(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    )
+    logger.info("Firebase initialized successfully")
+except ValueError as e:
+    if "already exists" in str(e):
+        logger.info("Firebase already initialized")
     else:
-        logger.warning("No 'remind me' phrase matched.")
+        logger.error(f"Firebase initialization error: {e}")
+        raise
+
+# Initialize Firestore
+db = firestore.client()
+logger.info("Firestore client initialized")
+
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
+logger.info("OpenAI client initialized")
+
+def extract_reminder_time(text: str) -> Optional[datetime]:
+    """
+    Extract a time specification from a reminder request in text.
+    Uses multiple patterns to find time references.
+    
+    Args:
+        text: The text to search for time references
+        
+    Returns:
+        datetime object if a valid future time is found, None otherwise
+    """
+    # Try multiple regex patterns to catch different reminder phrasings
+    patterns = [
+        r"remind me (?:to .+? )?(?:at|on|in|by) (.+?)(?:\.|$|\n)",
+        r"remind me (?:to .+? )?(.+?)(?:\.|$|\n)",
+        r"reminder.+?for (.+?)(?:\.|$|\n)", 
+        r"reminder.+?at (.+?)(?:\.|$|\n)",
+        r"follow.?up.+?on (.+?)(?:\.|$|\n)",
+        r"(?:schedule|set).+?(?:for|at) (.+?)(?:\.|$|\n)"
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            raw_phrase = match.group(1).strip()
+            logger.info(f"Found raw reminder phrase: {raw_phrase}")
+            
+            try:
+                # Try to parse the time with relaxed settings
+                parsed = dateparser.parse(
+                    raw_phrase, 
+                    settings={
+                        "PREFER_DATES_FROM": "future", 
+                        "STRICT_PARSING": False,
+                        "RELATIVE_BASE": datetime.now()
+                    }
+                )
+                
+                if parsed:
+                    delta = (parsed - datetime.now()).total_seconds()
+                    logger.info(f"Parsed reminder time: {parsed} (in {int(delta)}s)")
+                    
+                    # Accept any time in the future, but warn if it's very soon or far away
+                    if delta > 0:
+                        if delta < 60:
+                            logger.warning(f"Reminder time is very soon: {delta} seconds")
+                        elif delta > 31536000:  # More than a year
+                            logger.warning(f"Reminder time is very far: {delta/86400:.1f} days")
+                        return parsed
+                    else:
+                        logger.warning(f"Parsed time is in the past: {parsed}")
+            except Exception as e:
+                logger.error(f"Error parsing time '{raw_phrase}': {e}")
+                continue  # Try the next pattern
+    
+    # Try a more generic approach if specific patterns failed
+    try:
+        # Look for any time-related words and try to parse them
+        time_indicators = ["today", "tomorrow", "next", "later", "evening", "morning", 
+                           "afternoon", "night", "week", "month", "hour", "minute", "am", "pm"]
+        
+        words = text.lower().split()
+        for i, word in enumerate(words):
+            if any(indicator in word for indicator in time_indicators):
+                # Try to parse a phrase starting from this word
+                start_idx = max(0, i-2)  # Include a couple words before
+                end_idx = min(len(words), i+5)  # And several after
+                phrase = " ".join(words[start_idx:end_idx])
+                
+                parsed = dateparser.parse(
+                    phrase, 
+                    settings={
+                        "PREFER_DATES_FROM": "future", 
+                        "STRICT_PARSING": False,
+                        "RELATIVE_BASE": datetime.now()
+                    }
+                )
+                
+                if parsed:
+                    delta = (parsed - datetime.now()).total_seconds()
+                    if delta > 0:
+                        logger.info(f"Found time using generic approach: {parsed} (in {int(delta)}s)")
+                        return parsed
+    except Exception as e:
+        logger.error(f"Error in generic time parsing: {e}")
+    
+    # If we reach here, no valid time was found
+    logger.warning("No valid reminder time found in text.")
     return None
-# --- Reminder Creation ---
-def create_reminder(email_obj, tags):
-     print("🔍 Running reminder check...")
-     due_time = extract_reminder_time(email_obj["body"])
-     if due_time:
-         print(f"📝 Creating reminder due at: {due_time}")
-         try:
-             doc_ref = db.collection("reminders").add({
-                 "title": email_obj["subject"] or "Follow-up requested",
-                 "body": email_obj["body"],
-                 "sender": email_obj["sender"],
-                 "due": due_time.isoformat(),
-                 "status": "pending",
-                 "created_at": firestore.SERVER_TIMESTAMP
-             })
-             print(f"✅ Reminder added to Firestore: ID = {doc_ref[1].id}")
-             schedule_reminder(doc_ref[1].id, due_time, email_obj)
-         except Exception as e:
-             print(f"❌ Firestore reminder insert failed: {e}")
-     else:
-         print("⚠️ Skipping reminder creation: No valid time parsed.")
- 
-# --- Reminder Scheduling ---
-def schedule_reminder(reminder_id, due_time, email_obj):
-    """Schedule an in-memory reminder using threading.Timer."""
+
+def create_reminder(email_obj: Dict, tags: Optional[List[str]] = None) -> Optional[str]:
+    """
+    Create a new reminder based on an email.
+    
+    Args:
+        email_obj: Dict containing email information (sender, subject, body)
+        tags: Optional list of tags to categorize the reminder
+        
+    Returns:
+        str: ID of the created reminder, or None if creation failed
+    """
+    logger.info("🔍 Running reminder check...")
+    
+    if not email_obj or "body" not in email_obj:
+        logger.error("Invalid email object provided")
+        return None
+        
+    due_time = extract_reminder_time(email_obj["body"])
+    if not due_time:
+        logger.warning("⚠️ Skipping reminder creation: No valid time parsed.")
+        return None
+        
+    logger.info(f"📝 Creating reminder due at: {due_time}")
+    
+    try:
+        # Prepare reminder data
+        reminder_data = {
+            "title": email_obj.get("subject", "Follow-up requested"),
+            "body": email_obj["body"],
+            "sender": email_obj["sender"],
+            "due": due_time.isoformat(),
+            "status": "pending",
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "thread_id": email_obj.get("thread_id")
+        }
+        
+        # Add tags if provided
+        if tags:
+            reminder_data["tags"] = tags
+            
+        # Add to Firestore
+        doc_ref = db.collection("reminders").document()
+        doc_ref.set(reminder_data)
+        reminder_id = doc_ref.id
+        
+        logger.info(f"✅ Reminder added to Firestore: ID = {reminder_id}")
+        
+        # Schedule the reminder
+        schedule_reminder(reminder_id, due_time, email_obj)
+        
+        return reminder_id
+    except Exception as e:
+        logger.error(f"❌ Firestore reminder insert failed: {e}")
+        return None
+
+def schedule_reminder(reminder_id: str, due_time: datetime, email_obj: Dict) -> None:
+    """
+    Schedule an in-memory reminder using threading.Timer.
+    
+    Args:
+        reminder_id: The ID of the reminder to schedule
+        due_time: When the reminder should trigger
+        email_obj: Email information for sending the reminder
+    """
     delay = (due_time - datetime.now()).total_seconds()
     
     if delay <= 0:
-        logger.warning("Reminder due time is in the past, executing immediately")
+        logger.warning(f"Reminder {reminder_id} due time is in the past, executing immediately")
         send_reminder(reminder_id, email_obj)
     else:
-        logger.info(f"Scheduling in-memory reminder in {int(delay)} seconds")
+        logger.info(f"Scheduling in-memory reminder {reminder_id} in {int(delay)} seconds")
         # Create and start a timer thread to execute the reminder
         timer = threading.Timer(delay, send_reminder, args=[reminder_id, email_obj])
         timer.daemon = True  # Allow the timer to be terminated when the program exits
         timer.start()
 
-# --- Reminder Execution ---
-def send_reminder(reminder_id, email_obj):
-    """Send a follow-up email for a reminder and mark it as completed."""
+def send_reminder(reminder_id: str, email_obj: Dict) -> None:
+    """
+    Send a follow-up email for a reminder and mark it as completed.
+    
+    Args:
+        reminder_id: The ID of the reminder to send
+        email_obj: Email information for sending the reminder
+    """
     logger.info(f"Executing reminder with ID: {reminder_id}")
     
     # Fetch the latest reminder data from Firestore
@@ -134,8 +263,10 @@ def send_reminder(reminder_id, email_obj):
         # Prepare and send the reminder email
         subject = f"🔔 Reminder: {reminder_data.get('title', 'Follow-up')}"
         
+        # Get the original email subject
+        original_subject = reminder_data.get("title", "your previous message")
+        
         # Create a nicer email body
-        original_subject = reminder_data.get("subject", "your previous message")
         body = f"""
 You asked me to remind you about: "{reminder_data.get('title', 'your reminder')}".
 
@@ -234,8 +365,7 @@ Let me know if you need any follow-up actions.
         except Exception as ex:
             logger.error(f"Failed to update reminder status after error: {ex}")
 
-# --- Reminder Checking (Background Service) ---
-def reminder_checker_loop():
+def reminder_checker_loop() -> None:
     """
     Main loop for checking and processing due reminders.
     This should be run in a separate thread.
@@ -251,6 +381,9 @@ def reminder_checker_loop():
             reminders = db.collection("reminders")\
                 .where("status", "==", "pending")\
                 .stream()
+            
+            # Count how many reminders we'll process
+            processed_count = 0
             
             # Process each reminder
             for reminder in reminders:
@@ -273,6 +406,7 @@ def reminder_checker_loop():
                 # Check if the reminder is due
                 if due_time <= now:
                     logger.info(f"Processing due reminder {reminder_id}: {data.get('title')}")
+                    processed_count += 1
                     
                     # Prepare the email object for sending
                     email_obj = {
@@ -285,15 +419,25 @@ def reminder_checker_loop():
                     # Send the reminder
                     send_reminder(reminder_id, email_obj)
             
+            if processed_count > 0:
+                logger.info(f"Processed {processed_count} due reminders")
+                
         except Exception as e:
             logger.error(f"Error in reminder checker loop: {e}")
         
         # Sleep for a short interval before checking again
         time.sleep(60)  # Check every minute
 
-# --- Reminder Status Management ---
-def list_active_reminders(email=None):
-    """List all active reminders, optionally filtered by sender email."""
+def list_active_reminders(email: Optional[str] = None) -> List[Dict]:
+    """
+    List all active reminders, optionally filtered by sender email.
+    
+    Args:
+        email: Optional email to filter by
+        
+    Returns:
+        List of reminder dictionaries
+    """
     try:
         query = db.collection("reminders").where("status", "==", "pending")
         
@@ -340,8 +484,16 @@ def list_active_reminders(email=None):
         logger.error(f"Failed to list active reminders: {e}")
         return []
 
-def cancel_reminder(reminder_id):
-    """Cancel a pending reminder."""
+def cancel_reminder(reminder_id: str) -> bool:
+    """
+    Cancel a pending reminder.
+    
+    Args:
+        reminder_id: The ID of the reminder to cancel
+        
+    Returns:
+        bool: True if cancelled successfully, False otherwise
+    """
     try:
         reminder_ref = db.collection("reminders").document(reminder_id)
         reminder = reminder_ref.get()
@@ -378,9 +530,26 @@ def cancel_reminder(reminder_id):
         logger.error(f"Failed to cancel reminder {reminder_id}: {e}")
         return False
 
-def reschedule_reminder(reminder_id, new_due_time):
-    """Reschedule a pending reminder to a new time."""
+def reschedule_reminder(reminder_id: str, new_due_time: Union[str, datetime]) -> bool:
+    """
+    Reschedule a pending reminder to a new time.
+    
+    Args:
+        reminder_id: The ID of the reminder to reschedule
+        new_due_time: New due time (datetime object or ISO format string)
+        
+    Returns:
+        bool: True if rescheduled successfully, False otherwise
+    """
     try:
+        # Convert string to datetime if needed
+        if isinstance(new_due_time, str):
+            try:
+                new_due_time = datetime.fromisoformat(new_due_time)
+            except ValueError:
+                logger.error(f"Invalid due time format: {new_due_time}")
+                return False
+        
         reminder_ref = db.collection("reminders").document(reminder_id)
         reminder = reminder_ref.get()
         
@@ -417,7 +586,7 @@ def reschedule_reminder(reminder_id, new_due_time):
         # Re-schedule in memory if needed
         email_obj = {
             "sender": reminder_data.get("sender"),
-            "subject": reminder_data.get("subject", "Follow-up"),
+            "subject": reminder_data.get("title", "Follow-up"),
             "body": reminder_data.get("body", "No content"),
             "thread_id": reminder_data.get("thread_id")
         }
@@ -428,9 +597,13 @@ def reschedule_reminder(reminder_id, new_due_time):
         logger.error(f"Failed to reschedule reminder {reminder_id}: {e}")
         return False
 
-# --- Reminder Analytics ---
-def get_reminder_statistics():
-    """Get statistics about reminder usage."""
+def get_reminder_statistics() -> Dict:
+    """
+    Get statistics about reminder usage.
+    
+    Returns:
+        Dict containing reminder statistics
+    """
     try:
         # Get all reminder history
         history = db.collection("reminder_history").stream()
@@ -483,9 +656,12 @@ def get_reminder_statistics():
             "error": str(e)
         }
 
-# --- Startup Function ---
-def start_background_services():
+def start_background_services() -> None:
     """Start the background services for reminder checking."""
+    # Check if needed environment variables are set
+    if not EMAIL_USER or not EMAIL_PASS:
+        logger.error("Email credentials missing. Reminder service can't send notifications.")
+    
     reminder_thread = threading.Thread(target=reminder_checker_loop)
     reminder_thread.daemon = True
     reminder_thread.start()
@@ -496,7 +672,8 @@ def start_background_services():
         db.collection("system_status").document("reminder_service").set({
             "status": "running",
             "started_at": firestore.SERVER_TIMESTAMP,
-            "hostname": os.getenv("HOSTNAME", "unknown")
+            "hostname": os.getenv("HOSTNAME", "unknown"),
+            "version": "2.0.0"  # Add version tracking
         })
     except Exception as e:
         logger.error(f"Failed to record reminder service status: {e}")
@@ -511,19 +688,23 @@ if __name__ == "__main__":
         "thread_id": "test-thread-123"
     }
     
+    logger.info("Starting reminder system test...")
+    
     # Create a test reminder
     reminder_id = create_reminder(test_email)
     
     if reminder_id:
-        print(f"Test reminder created with ID: {reminder_id}")
+        logger.info(f"Test reminder created with ID: {reminder_id}")
         
         # Start the reminder service
         start_background_services()
         
         # Keep the script running to allow the background service to process reminders
         try:
-            print("Press Ctrl+C to exit...")
+            logger.info("Press Ctrl+C to exit...")
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("Exiting...")
+            logger.info("Exiting...")
+    else:
+        logger.error("Failed to create test reminder!")

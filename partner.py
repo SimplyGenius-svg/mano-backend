@@ -3,7 +3,8 @@ import json
 import logging
 import datetime
 import re
-from typing import Dict, List, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
+import logging
 from dataclasses import dataclass
 from firebase_admin import firestore
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from gpt_helpers import chat_with_gpt
 from memory_logger import save_memory
 from firebase import db
 from query_engine import query_data
+from weekly_digest import VCDigestGenerator
 
 # Set up logging
 logging.basicConfig(
@@ -78,6 +80,132 @@ class CapitalDeploymentContext:
             self.pipeline_stage_counts = {}
         if self.partner_allocations is None:
             self.partner_allocations = {}
+
+
+def handle_digest_request(email_obj: Dict[str, Any]) -> bool:
+    """
+    Process requests for a weekly digest of top startup pitches.
+    This function detects digest requests from partners and generates appropriate reports.
+    
+    Args:
+        email_obj: Dictionary containing email information
+        
+    Returns:
+        bool: True if digest was successfully processed and sent
+    """
+    try:
+        logger.info(f"Processing digest request from {email_obj.get('sender')}")
+        
+        # Get the email body and subject
+        body = email_obj.get("body", "").lower()
+        subject = email_obj.get("subject", "").lower()
+        
+        # Check if this is a request for a weekly digest
+        is_digest_request = any(phrase in body or phrase in subject for phrase in [
+            "weekly digest", 
+            "pitch digest", 
+            "startup digest",
+            "top pitches", 
+            "best pitches",
+            "weekly report",
+            "pitch summary",
+            "startup summary"
+        ])
+        
+        if not is_digest_request:
+            logger.info("Not a digest request, skipping")
+            return False
+            
+        # Extract request parameters
+        days_back = 7  # Default to a week
+        top_n = 10     # Default to top 10 pitches
+        
+        # Look for customized timeframe
+        if "month" in body or "monthly" in body:
+            days_back = 30
+        elif "two weeks" in body or "2 weeks" in body:
+            days_back = 14
+        elif "today" in body or "24 hours" in body:
+            days_back = 1
+        
+        # Look for custom number of pitches
+        count_match = re.search(r"top\s+(\d+)", body + " " + subject)
+        if count_match:
+            try:
+                top_n = int(count_match.group(1))
+                # Sanity check on the number
+                top_n = min(max(top_n, 3), 20)  # Between 3 and 20
+            except ValueError:
+                pass  # Keep default if conversion fails
+        
+        # Look for specific industry focus
+        focus_areas = []
+        industries = ["ai", "fintech", "healthcare", "biotech", "saas", "consumer", 
+                     "enterprise", "hardware", "deeptech", "crypto", "climate"]
+        
+        for industry in industries:
+            if industry in body.lower():
+                focus_areas.append(industry)
+        
+        # Load partner profile to get preferences
+        partner = load_partner_profile(email_obj.get("sender"))
+        
+        # Create custom ranking criteria based on partner's focus areas
+        custom_criteria = {}
+        if focus_areas or partner.focus_areas:
+            # Combine explicit request focus with partner's general preferences
+            all_focus_areas = set(focus_areas + (partner.focus_areas or []))
+            
+            # Create bonus weights for each focus area
+            for area in all_focus_areas:
+                custom_criteria[f"{area}_bonus"] = 0.15  # 15% bonus for each focus area
+        
+        # Initialize the digest generator
+        digest_generator = VCDigestGenerator(partner.email)
+        
+        # Process the digest with custom parameters
+        success = digest_generator.process_digest_for_partner(
+            partner_email=partner.email,
+            partner_name=partner.name,
+            days_back=days_back,
+            top_n=top_n,
+            custom_criteria=custom_criteria if custom_criteria else None
+        )
+        
+        if success:
+            # Send confirmation
+            response = f"""
+            I've prepared and sent your digest of the top {top_n} pitches from the past {days_back} days.
+            
+            The digest includes ranked startups based on traction, team quality, market size, and investment potential.
+            """
+            
+            if focus_areas:
+                response += f"\nAs requested, I've prioritized companies in: {', '.join(focus_areas)}."
+                
+            response += "\n\nCheck your inbox for the full report. Let me know if you'd like any follow-up information on specific companies."
+            
+            # Send the confirmation
+            send_enhanced_email_reply(email_obj.get("sender"), email_obj.get("subject"), response, partner)
+            
+            logger.info(f"Successfully processed digest request for {partner.email}")
+            return True
+        else:
+            # Send error notification
+            error_response = """
+            I tried to generate your pitch digest, but encountered an issue in the process.
+            
+            I'll look into this and send your digest as soon as possible. If you need this urgently, please let me know.
+            """
+            
+            send_enhanced_email_reply(email_obj.get("sender"), email_obj.get("subject"), error_response, partner)
+            
+            logger.error(f"Failed to process digest for {partner.email}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error handling digest request: {e}")
+        return False
 
 # --- Partner Profile Management ---
 def load_partner_profile(email: str) -> Partner:
@@ -509,6 +637,21 @@ def process_partner_email(email_obj: Dict[str, Any]) -> Dict[str, Any]:
         # Step 2: Load partner profile
         partner = load_partner_profile(email_obj["sender"])
         
+        # Check if this is a digest request
+        body = email_obj.get("body", "").lower()
+        subject = email_obj.get("subject", "").lower()
+        is_digest_request = any(phrase in body or phrase in subject for phrase in [
+            "weekly digest", "pitch digest", "top pitches", "best pitches",
+            "weekly report", "pitch summary", "startup summary"
+        ])
+
+        if is_digest_request:
+            success = handle_digest_request(email_obj)
+            logger.info(f"Digest request processed: {'Successfully' if success else 'Failed'}")
+            
+            # If digest was processed successfully and we want to short-circuit other processing
+            # We could return early here, but for now we'll continue to log the interaction
+        
         # Step 3: Process any capital deployment requests
         if isinstance(email_analysis, dict) and email_analysis.get("capital_request"):
             # Convert dict to object if needed
@@ -624,7 +767,8 @@ def process_partner_email(email_obj: Dict[str, Any]) -> Dict[str, Any]:
                 send_enhanced_email_reply(email_obj["sender"], email_obj["subject"], confirmation, partner)
         
         # Step 6: Generate an appropriate response based on analysis and partner profile
-        elif email_analysis_obj.urgency_score >= 3 or any('ask' in action.description.lower() for action in email_analysis_obj.action_items):
+        # Skip this step if we already processed a digest request
+        elif not is_digest_request and (email_analysis_obj.urgency_score >= 3 or any('ask' in action.description.lower() for action in email_analysis_obj.action_items)):
             response = generate_partner_response(email_analysis_obj, partner)
             send_enhanced_email_reply(email_obj["sender"], email_obj["subject"], response, partner)
         
@@ -646,6 +790,7 @@ def process_partner_email(email_obj: Dict[str, Any]) -> Dict[str, Any]:
             "processing_time": processing_time,
             "urgency_score": email_analysis_obj.urgency_score,
             "has_capital_request": bool(email_analysis_obj.capital_request),
+            "is_digest_request": is_digest_request,
             "timestamp": firestore.SERVER_TIMESTAMP
         })
         
@@ -664,7 +809,6 @@ def process_partner_email(email_obj: Dict[str, Any]) -> Dict[str, Any]:
             "status": "error",
             "message": f"Error processing email: {str(e)}"
         }
-
 # --- Proactive VC Chief of Staff Functions ---
 def generate_daily_capital_digest() -> Dict[str, Any]:
     """
