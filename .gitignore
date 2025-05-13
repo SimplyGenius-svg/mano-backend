@@ -1,13 +1,49 @@
-# Environment
+# Environment Variables
 .env
-venv/
-*.json
-.DS_Store
 
-# PyCache
+# Virtual Environments
+venv/
+.venv/
+
+# Python Cache & Compiled Files
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
 
-# IDEs
+# Data & Databases
+vector_db/
+*.sqlite3
+
+# Logs
+*.log
+*.log.*
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDEs & Editors
 .vscode/
 .idea/
+*.swp
+*~
+
+# Build artifacts (Optional, but good practice)
+# build/
+# dist/
+# *.egg-info/
+
+# Test artifacts (Optional, if using testing frameworks)
+# .tox/
+# .nox/
+# .coverage
+# .coverage.*
+# .cache
+# .pytest_cache/
+# htmlcov/
+
+# Add specific JSON files to ignore later if needed, e.g.:
+# specific_generated_data.json
+# output_files/*.json
