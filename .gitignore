@@ -1,49 +1,41 @@
-# Environment Variables
-.env
-
-# Virtual Environments
-venv/
-.venv/
-
-# Python Cache & Compiled Files
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
+*.egg-info/
+dist/
+build/
 
-# Data & Databases
-vector_db/
-*.sqlite3
+# Virtual Environment
+env/
+venv/
+mano-env/
+
+# Environment Variables
+.env
 
 # Logs
 *.log
-*.log.*
+component_usage.log
 
-# OS-specific files
+# OS-Specific
 .DS_Store
 Thumbs.db
 
-# IDEs & Editors
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# Firebase/Secrets (if applicable)
+firebase_credentials.json
+firebase_config.json
+
+# VSCode/IDE settings
 .vscode/
 .idea/
+
+# Cache and temporary files
+*.tmp
 *.swp
-*~
-
-# Build artifacts (Optional, but good practice)
-# build/
-# dist/
-# *.egg-info/
-
-# Test artifacts (Optional, if using testing frameworks)
-# .tox/
-# .nox/
-# .coverage
-# .coverage.*
-# .cache
-# .pytest_cache/
-# htmlcov/
-
-# Add specific JSON files to ignore later if needed, e.g.:
-# specific_generated_data.json
-# output_files/*.json
+.cache/

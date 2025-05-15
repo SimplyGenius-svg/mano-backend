@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import re
 import logging
-from urgency_scorer import score_urgency  # Keeping your existing urgency scorer
+from src.logic.urgency_scorer import score_urgency  # Keeping your existing urgency scorer
 
 # Configure logging
 logging.basicConfig(

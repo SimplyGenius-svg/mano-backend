@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from sentience_engine import process_email_for_memory, EmailAnalysis, CapitalRequest, ActionItem
+from src.logic.sentience_engine import process_email_for_memory, EmailAnalysis, CapitalRequest, ActionItem
 from gpt_helpers import chat_with_gpt
 from memory_logger import save_memory
 from firebase import db

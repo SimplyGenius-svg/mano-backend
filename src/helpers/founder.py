@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from gpt_helpers import generate_pitch_summary, generate_friendly_feedback, chat_with_gpt
 from memory_logger import save_memory
-from sentience_engine import process_email_for_memory
+from src.logic.sentience_engine import process_email_for_memory
 from vector_client import store_vector, search_vectors  # Assuming you'll implement this
 
 # Configure logging
