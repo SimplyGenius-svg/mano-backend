@@ -11,3 +11,10 @@ __pycache__/
 # IDEs
 .vscode/
 .idea/
+
+# QOL Additions
+.DS_Store
+__pycache__/
+*.log
+.env
+venv/
