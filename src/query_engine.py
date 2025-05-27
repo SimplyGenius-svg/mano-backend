@@ -1,11 +1,11 @@
-from component_logger import component_logger
+from src.component_logger import component_logger
 
 import os
 import json
 import logging
-from firebase import db
+from src.util.firebase import db
 from firebase_admin import firestore
-from gpt_helpers import chat_with_gpt
+from src.gpt_helpers import chat_with_gpt
 
 # Configure logging
 logging.basicConfig(

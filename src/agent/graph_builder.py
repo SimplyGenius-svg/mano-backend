@@ -1,5 +1,5 @@
+from src.agent.ai_agents import *
 from langgraph.graph import StateGraph
-from src.agent import agents
 from typing import TypedDict, Literal, Optional, Dict, Any
 
 class EmailState(TypedDict, total=False):
@@ -10,45 +10,38 @@ class EmailState(TypedDict, total=False):
     metadata: Dict[str, Any]
     pitch_insights: Optional[Dict[str, Any]]
     capital_info: Optional[Dict[str, Any]]
+    capital_analysis: Optional[Dict[str, Any]]
+    digest_content: Optional[str]
     summary: Optional[str]
     reply: Optional[str]
-
+    email_analysis: Optional[Dict[str, Any]]
+    partner_profile: Optional[Any]
+    digest_generated: Optional[bool]
 
 class GraphBuilder:
     def __init__(self):
         self.graph = StateGraph(state_schema=EmailState)
-        
 
     def build_graph(self):
         # Define the nodes and their corresponding agent functions
         nodes = {
-            "EmailClassifierAgent": agents.email_classifier_agent,
-            "FounderAgent": agents.founder_agent,
-            "PitchAnalysisAgent": agents.pitch_analysis_agent,
-            "ReplyGeneratorAgent": agents.reply_generator_agent,
-            "PartnerAgent": agents.partner_agent,
-            "CapitalAnalysisAgent": agents.capital_analysis_agent,
-            "DigestGeneratorAgent": agents.digest_generator_agent,
-            "UnclassifiedLoggerAgent": agents.unclassified_logger_agent
+            "EmailProcessingAgent": email_processing_agent,
+            "PartnerProfileAgent": partner_profile_agent,
+            "InvestmentAnalysisAgent": investment_analysis_agent,
+            "ReplyGeneratorAgent": reply_generator_agent,
         }
 
         # Add nodes to the graph
         for node_name, agent_func in nodes.items():
             self.graph.add_node(node_name, agent_func)
 
-        # Define edges
-        self.graph.set_entry_point("EmailClassifierAgent")
-        self.graph.add_edge("EmailClassifierAgent", "FounderAgent")
-        self.graph.add_edge("FounderAgent", "PitchAnalysisAgent")
-        self.graph.add_edge("PitchAnalysisAgent", "ReplyGeneratorAgent")
-        self.graph.add_edge("EmailClassifierAgent", "PartnerAgent")
-        self.graph.add_edge("PartnerAgent", "CapitalAnalysisAgent")
-        self.graph.add_edge("CapitalAnalysisAgent", "DigestGeneratorAgent")
-        self.graph.add_edge("EmailClassifierAgent", "UnclassifiedLoggerAgent")
+        # Define a linear flow to avoid state collisions
+        self.graph.set_entry_point("EmailProcessingAgent")
+        self.graph.add_edge("EmailProcessingAgent", "PartnerProfileAgent")
+        self.graph.add_edge("PartnerProfileAgent", "InvestmentAnalysisAgent")
+        self.graph.add_edge("InvestmentAnalysisAgent", "ReplyGeneratorAgent")
 
-        # Finalize
+        # Set single finish point
         self.graph.set_finish_point("ReplyGeneratorAgent")
-        self.graph.set_finish_point("DigestGeneratorAgent")
-        self.graph.set_finish_point("UnclassifiedLoggerAgent")
 
         return self.graph.compile()

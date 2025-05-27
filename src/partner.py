@@ -11,11 +11,11 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from src.logic.sentience_engine import process_email_for_memory, EmailAnalysis, CapitalRequest, ActionItem
-from gpt_helpers import chat_with_gpt
-from memory_logger import save_memory
-from firebase import db
-from query_engine import query_data
+from src.helpers.sentience_engine import process_email_for_memory, EmailAnalysis, CapitalRequest, ActionItem
+from src.gpt_helpers import chat_with_gpt
+from src.memory_logger import save_memory
+from src.util.firebase import db
+from src.query_engine import query_data
 from weekly_digest import VCDigestGenerator
 
 # Set up logging
@@ -280,7 +280,7 @@ def update_partner_profile(partner: Partner) -> bool:
         logger.error(f"Failed to update partner profile: {e}")
         return False
 
-def learn_from_interaction(partner_email: str, email_analysis: EmailAnalysis) -> None:
+def learn_from_interaction(partner_email: str, email_analysis: Any) -> None:
     """Update partner profile based on new interactions"""
     partner = load_partner_profile(partner_email)
     
@@ -288,9 +288,9 @@ def learn_from_interaction(partner_email: str, email_analysis: EmailAnalysis) ->
     timestamp = datetime.datetime.now().isoformat()
     interaction = {
         "timestamp": timestamp,
-        "subject": email_analysis.subject,
-        "intent": email_analysis.intent,
-        "sentiment": email_analysis.sentiment_score
+        "subject": getattr(email_analysis, 'subject', ''),
+        "intent": getattr(email_analysis, 'intent', ''),
+        "sentiment": getattr(email_analysis, 'sentiment_score', 0.0)
     }
     
     # Keep only the 10 most recent interactions
@@ -299,14 +299,18 @@ def learn_from_interaction(partner_email: str, email_analysis: EmailAnalysis) ->
         partner.recent_interactions = partner.recent_interactions[-10:]
     
     # Check for capital request details
-    if email_analysis.capital_request and email_analysis.capital_request.company:
-        company = email_analysis.capital_request.company
-        if company not in partner.active_deals:
+    capital_request = getattr(email_analysis, 'capital_request', None)
+    company = None
+    if capital_request:
+        if isinstance(capital_request, dict):
+            company = capital_request.get('company')
+        else:
+            company = getattr(capital_request, 'company', None)
+        if company and company not in partner.active_deals:
             partner.active_deals.append(company)
     
     # Update communication style based on tone patterns
     if hasattr(email_analysis, 'tone') and email_analysis.tone:
-        # Simple heuristic - adapt over time based on observed patterns
         tone_map = {
             "formal": "formal",
             "casual": "casual", 
@@ -463,7 +467,7 @@ def process_capital_request(email_analysis: EmailAnalysis) -> Tuple[bool, str]:
         return True, f"Updated existing deal for {company}"
 
 # --- Enhanced Partner Email Handling ---
-def generate_partner_response(email_analysis: EmailAnalysis, partner: Partner) -> str:
+def generate_partner_response(email_analysis: Any, partner: Partner) -> str:
     """Generate a sharp, formal, fast response to a partner email based on analysis and partner profile."""
     try:
         capital_context = load_capital_context()
@@ -478,12 +482,12 @@ def generate_partner_response(email_analysis: EmailAnalysis, partner: Partner) -
                 "recent_interactions": partner.recent_interactions[:3] if partner.recent_interactions else []
             },
             "email": {
-                "body": email_analysis.body,
-                "intent": email_analysis.intent,
-                "urgency": email_analysis.urgency_score,
-                "action_items": [item.description for item in email_analysis.action_items],
-                "sentiment": email_analysis.sentiment_score,
-                "capital_request": email_analysis.capital_request.__dict__ if email_analysis.capital_request else None
+                "body": getattr(email_analysis, 'body', ''),
+                "intent": getattr(email_analysis, 'intent', ''),
+                "urgency": getattr(email_analysis, 'urgency_score', 0),
+                "action_items": [getattr(item, 'description', str(item)) for item in getattr(email_analysis, 'action_items', [])],
+                "sentiment": getattr(email_analysis, 'sentiment_score', 0.0),
+                "capital_request": getattr(getattr(email_analysis, 'capital_request', None), '__dict__', getattr(email_analysis, 'capital_request', None)) if getattr(email_analysis, 'capital_request', None) else None
             },
             "capital": {
                 "available": capital_context.available_capital,
@@ -493,8 +497,8 @@ def generate_partner_response(email_analysis: EmailAnalysis, partner: Partner) -
             }
         }
 
-        if email_analysis.capital_request and email_analysis.capital_request.company:
-            company = email_analysis.capital_request.company
+        if getattr(email_analysis, 'capital_request', None) and (getattr(email_analysis, 'capital_request', None).get('company') if isinstance(getattr(email_analysis, 'capital_request', None), dict) else getattr(getattr(email_analysis, 'capital_request', None), 'company', None)):
+            company = getattr(email_analysis, 'capital_request', None).get('company') if isinstance(getattr(email_analysis, 'capital_request', None), dict) else getattr(getattr(email_analysis, 'capital_request', None), 'company', None)
             if company in capital_context.active_deals:
                 context["company"] = capital_context.active_deals[company]
 

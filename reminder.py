@@ -13,6 +13,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
+from src.util.firebase import db
+
 # Load environment variables
 load_dotenv()
 EMAIL_USER = os.getenv("EMAIL_USER")
@@ -41,7 +43,6 @@ except ValueError as e:
         raise
 
 # Initialize Firestore
-db = firestore.client()
 logger.info("Firestore client initialized")
 
 # Initialize OpenAI client

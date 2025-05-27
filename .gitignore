@@ -30,6 +30,7 @@ Thumbs.db
 # Firebase/Secrets (if applicable)
 firebase_credentials.json
 firebase_config.json
+mano-firebase-key.json
 
 # VSCode/IDE settings
 .vscode/

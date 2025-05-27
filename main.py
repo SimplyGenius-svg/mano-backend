@@ -1,8 +1,9 @@
-from src.agent import graph_builder, agents  # Adjust if your file is named differently
+from agent import ai_agents
+from src.agent.graph_builder import GraphBuilder
 
 def main():
     # Build the LangGraph
-    graph_builder_instance = graph_builder.GraphBuilder()
+    graph_builder_instance = GraphBuilder()
     graph = graph_builder_instance.build_graph()
 
     # Define a sample email input

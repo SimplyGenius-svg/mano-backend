@@ -1,5 +1,5 @@
-from component_logger import log_component
-from firebase import db
+from src.component_logger import log_component
+from src.util.firebase import db
 from firebase_admin import firestore
 from datetime import datetime
 

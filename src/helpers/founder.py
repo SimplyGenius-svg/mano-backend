@@ -9,14 +9,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict, field
-from firebase import db
+from src.util.firebase import db
 from firebase_admin import firestore
 from dotenv import load_dotenv
 
-from gpt_helpers import generate_pitch_summary, generate_friendly_feedback, chat_with_gpt
-from memory_logger import save_memory
-from src.logic.sentience_engine import process_email_for_memory
-from vector_client import store_vector, search_vectors  # Assuming you'll implement this
+from src.gpt_helpers import generate_pitch_summary, generate_friendly_feedback, chat_with_gpt
+from src.memory_logger import save_memory
+from src.helpers.sentience_engine import process_email_for_memory
+from src.util.vector_client import store_vector, search_vectors  # Assuming you'll implement this
 
 # Configure logging
 logging.basicConfig(

@@ -11,6 +11,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+from src.util.firebase import db
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -27,9 +29,6 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"  # Default timezone for date calculatio
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Access Firestore DB (assuming it's already initialized in firebase.py)
-from firebase import db
 
 class VCDigestGenerator:
     """
