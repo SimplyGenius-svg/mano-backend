@@ -541,7 +541,7 @@ if __name__ == "__main__":
     
     # Configuration (could be moved to config file or environment variables)
     CONFIG = {
-        "partners": ["gyanbhambhani@gmail.com"],  # List of partner emails
+        "partners": ["gyanbhambhani@gmail.com", "bheleparamveer@gmail.com"],  # List of partner emails
         "days_back": 7,                          # Look back 7 days for pitches
         "top_n": 10,                             # Include top 10 pitches
     }
