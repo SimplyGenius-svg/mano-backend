@@ -3,11 +3,9 @@
 import threading
 import time
 
-from agent import main as run_agent
-from mail_reader import read_mail
-from weekly_digest import main as run_digest
-from firebase import initialize_firebase
-from vector_client import connect
+from agent import run_agent
+from mail_reader import fetch_all_unread_emails
+from weekly_digest import VCDigestGenerator
 
 def start_agent():
     print("🧠 Starting agent...")
@@ -16,19 +14,19 @@ def start_agent():
 def start_mail_reader():
     print("📩 Starting mail reader...")
     while True:
-        read_mail()
+        fetch_all_unread_emails()
         time.sleep(60)  # Poll every 60 seconds
 
 def start_weekly_digest():
     print("📰 Starting weekly digest...")
-    run_digest()
+    digest_generator = VCDigestGenerator()
+    digest_generator.process_all_partner_digests()
 
 def main():
     print("🚀 Initializing Mano Backend...")
 
     # Step 1: Initialize core services
-    initialize_firebase()
-    connect()
+    # Vector client and Firebase initialize automatically on import
 
     # Step 2: Launch threads
     agent_thread = threading.Thread(target=start_agent, daemon=True)
